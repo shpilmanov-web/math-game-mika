@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>חשבון למיקה</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        .animate-shake { animation: shake 0.2s ease-in-out 0s 2; }
+        .ltr-text { direction: ltr; display: inline-block; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+        
+        // יצירת רכיבי אייקונים ידנית עבור ה-CDN
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (iconRef.current) {
+                    iconRef.current.innerHTML = lucide.createIcons({
+                        icons: { [name]: lucide.icons[name] }
+                    });
+                }
+            }, [name]);
+            return <i data-lucide={name} className={className} style={{width: size, height: size}}></i>;
+        };
+
+        const MathGame = () => {
+            const levels = {
+                practice: { label: 'אימון', time: Infinity, questions: 30, color: 'bg-teal-500', borderColor: 'border-teal-600', hasTimer: false },
+                easy: { label: 'קל', time: 60, questions: 10, color: 'bg-green-500', borderColor: 'border-green-600', hasTimer: true },
+                medium: { label: 'בינוני', time: 30, questions: 20, color: 'bg-blue-500', borderColor: 'border-blue-600', hasTimer: true },
+                hard: { label: 'קשה', time: 15, questions: 30, color: 'bg-orange-500', borderColor: 'border-orange-600', hasTimer: true },
+                expert: { label: 'מומחה', time: 5, questions: 60, color: 'bg-purple-600', borderColor: 'border-purple-700', hasTimer: true },
+                genius: { label: 'גאון', time: 1.5, questions: 60, color: 'bg-red-600', borderColor: 'border-red-700', hasTimer: true },
+            };
+
+            const positivePhrases = ["נכון מאוד!", "כל הכבוד!", "מצויין!", "את אלופה!", "יופי מיקה!"];
+
+            const [gameState, setGameState] = useState('menu');
+            const [currentLevel, setCurrentLevel] = useState('easy');
+            const [score, setScore] = useState(0);
+            const [problem, setProblem] = useState({ a: 0, b: 0, op: '+', result: 0 });
+            const [userInput, setUserInput] = useState('');
+            const [timeLeft, setTimeLeft] = useState(60);
+            const [feedback, setFeedback] = useState(null);
+            
+            const currentLevelRef = useRef('easy');
+            const timerRef = useRef(null);
+
+            const playSound = (type) => {
+                try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    const now = ctx.currentTime;
+                    if (type === 'correct') {
+                        osc.frequency.setValueAtTime(523.25, now);
+                        osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.1);
+                        gain.gain.setValueAtTime(0.1, now);
+                        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                        osc.start(now); osc.stop(now + 0.5);
+                    } else if (type === 'wrong') {
+                        osc.type = 'sawtooth';
+                        osc.frequency.setValueAtTime(150, now);
+                        gain.gain.setValueAtTime(0.1, now);
+                        osc.start(now); osc.stop(now + 0.3);
+                    }
+                } catch (e) {}
+            };
+
+            const speak = (text) => {
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const u = new SpeechSynthesisUtterance(text);
+                    u.lang = 'he-IL';
+                    window.speechSynthesis.speak(u);
+                }
+            };
+
+            const generateProblem = useCallback(() => {
+                const isAddition = Math.random() > 0.5;
+                const a = Math.floor(Math.random() * 10) + 1;
+                const b = Math.floor(Math.random() * 10) + 1;
+                const prob = isAddition ? { a, b, op: '+', result: a + b } : { a: a + b, b: a, op: '-', result: b };
+                setProblem(prob);
+                setUserInput('');
+                setFeedback(null);
+                if (levels[currentLevelRef.current].hasTimer) setTimeLeft(levels[currentLevelRef.current].time);
+            }, []);
+
+            const startGame = (levelKey) => {
+                currentLevelRef.current = levelKey;
+                setCurrentLevel(levelKey);
+                setGameState('playing');
+                setScore(0);
+                generateProblem();
+                speak(`בהצלחה מיקה, רמת ${levels[levelKey].label}`);
+            };
+
+            useEffect(() => {
+                if (gameState === 'playing' && levels[currentLevel]?.hasTimer) {
+                    timerRef.current = setInterval(() => {
+                        setTimeLeft(prev => {
+                            if (prev <= 0.1) { clearInterval(timerRef.current); return 0; }
+                            return prev - 0.1;
+                        });
+                    }, 100);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [gameState, currentLevel]);
+
+            useEffect(() => {
+                if (timeLeft === 0 && gameState === 'playing') {
+                    setFeedback('wrong');
+                    playSound('wrong');
+                    speak("נגמר הזמן!");
+                    setTimeout(() => setGameState('gameover'), 1000);
+                }
+            }, [timeLeft]);
+
+            const submitAnswer = () => {
+                if (parseInt(userInput) === problem.result) {
+                    setFeedback('correct');
+                    setScore(s => s + 1);
+                    playSound('correct');
+                    speak(positivePhrases[Math.floor(Math.random() * positivePhrases.length)]);
+                    if (score + 1 >= levels[currentLevel].questions) {
+                        setTimeout(() => setGameState('won'), 1500);
+                    } else {
+                        setTimeout(generateProblem, 1200);
+                    }
+                } else {
+                    setFeedback('wrong');
+                    playSound('wrong');
+                    setTimeout(() => setFeedback(null), 800);
+                }
+            };
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen bg-slate-100 p-4" dir="rtl">
+                    {gameState === 'menu' && (
+                        <div className="flex flex-col gap-3 w-full max-w-md">
+                            <h1 className="text-3xl font-black text-center mb-6 text-blue-800">חשבון למיקה</h1>
+                            {Object.entries(levels).map(([key, lvl]) => (
+                                <button key={key} onClick={() => startGame(key)} className={`${lvl.color} text-white p-4 rounded-2xl font-bold shadow-lg`}>
+                                    {lvl.label} ({lvl.questions} שאלות)
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {gameState === 'playing' && (
+                        <div className="w-full max-w-md text-center">
+                            <div className="bg-white p-8 rounded-3xl shadow-xl border-b-8 mb-6">
+                                <div className="text-6xl font-black mb-6 ltr-text">{problem.a} {problem.op} {problem.b} =</div>
+                                <div className={`text-6xl p-4 border-4 rounded-2xl ${feedback === 'correct' ? 'bg-green-100' : 'bg-gray-50'}`}>{userInput || '?'}</div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 ltr-text">
+                                {[1,2,3,4,5,6,7,8,9,0].map(n => (
+                                    <button key={n} onClick={() => setUserInput(u => u + n)} className="bg-white p-6 text-3xl font-bold rounded-xl shadow">{n}</button>
+                                ))}
+                                <button onClick={() => setUserInput('')} className="bg-red-100 p-6 text-xl font-bold rounded-xl col-span-2 text-red-600">מחק</button>
+                                <button onClick={submitAnswer} className="bg-green-500 text-white p-6 text-3xl font-bold rounded-xl shadow">✓</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {gameState === 'won' && (
+                        <div className="text-center bg-white p-10 rounded-3xl shadow-2xl border-4 border-yellow-400">
+                            <h2 className="text-5xl font-black text-blue-800 mb-4">אלופה!</h2>
+                            <p className="text-xl mb-6">ניצחת את רמת {levels[currentLevel].label}!</p>
+                            <button onClick={() => setGameState('menu')} className="bg-blue-600 text-white px-8 py-4 rounded-full font-bold">חזרה לתפריט</button>
+                        </div>
+                    )}
+                    
+                    {gameState === 'gameover' && (
+                        <div className="text-center bg-white p-10 rounded-3xl shadow-2xl">
+                            <h2 className="text-3xl font-bold text-red-600 mb-4">נגמר הזמן!</h2>
+                            <button onClick={() => setGameState('menu')} className="bg-gray-200 px-8 py-4 rounded-full font-bold">נסה שוב</button>
+                        </div>
+                    )}
+                    
+                    <footer className="mt-8 text-blue-400 font-bold">מאבא למיקה מור ❤️</footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<MathGame />);
+    </script>
+</body>
+</html>
